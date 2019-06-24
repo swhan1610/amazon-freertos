@@ -240,6 +240,22 @@ IotHttpsReturnCode_t IotHttpsClient_InitializeRequest(IotHttpsRequestHandle_t * 
  * The remaining length, after the header is added, is printed to the system configured standard debug output when 
  * IOT_LOG_LEVEL_HTTPS is set to IOT_LOG_DEBUG in iot_config.h. 
  * 
+ * For an asynchronous request, this function can be invoked before the request is sent with 
+ * @ref https_client_function_sendasync, or during the @ref https_client_function_appendheadercallback. For an 
+ * asynchronous request, it is recommended to invoke this function in #IotHttpsClientCallbacks_t.appendHeaderCallback.
+ * 
+ * <b> Asynchronous Example </b>
+ * @code{c}
+ * void _applicationDefined_appendHeaderCallback(void * pPrivData, IotHttpsRequestHandle_t reqHandle)
+ * {
+ *      ...
+ *      char * date_in_iso8601[17];
+ *      GET_DATE_IN_ISO8601(date_in_iso8601);
+ *      IotHttpsClient_AddHeader(reqHandle, "x-amz-date", date_in_iso8601, strlen(date_in_iso8601));
+ *      ...
+ * }
+ * @endcode
+ * 
  * For a synchronous request, if extra headers are desired to be added, this function must be invoked before 
  * @ref https_client_function_sendsync.
  * <b> Synchronous Example </b>
@@ -273,6 +289,53 @@ IotHttpsReturnCode_t IotHttpsClient_InitializeRequest(IotHttpsRequestHandle_t * 
 /* @[declare_https_client_addheader] */
 IotHttpsReturnCode_t IotHttpsClient_AddHeader(IotHttpsRequestHandle_t reqHandle, char * pName, char * pValue, uint32_t len);
 /* @[declare_https_client_addheader] */
+
+/**
+ * @brief Writes request body to the network for the request represented by reqHandle.
+ * 
+ * This function is intended to be used by an asynchronous request. It must be called within the 
+ * #IotHttpsClientCallbacks_t.writeCallback.
+ * 
+ * In HTTP/1.1 the headers are sent on the network first before any body can be sent. The auto-generated header
+ * Content-Length is taken from the len parameter and sent first before the data in parameter pBuf is send. In order for this function
+ * to be called twice with variable lengths of data, a request with Transfer-Encoding: chunked would be needed. This 
+ * library does not support Transfer-Encoding: chunked, so this function cannot be called more than once in 
+ * #IotHttpsClientCallbacks_t.writeCallback for an HTTP/1.1 request. 
+ * 
+ * For placeholder possible future support of HTTP/2 isComplete is used so that this function can be called more 
+ * than once. Also so that the writeCallback can be invoked again at a later time for stream multiplexing.
+ * 
+ * <b> Example Asynchronous Code </b>
+ * @code{c}
+ * void applicationDefined_writeCallback(void * pPrivData, IotHttpsRequestHandle_t reqHandle)
+ * {
+ *      ...
+ *      char * writeData[1024];
+ *      IotHttpsClient_WriteRequestBody(reqHandle, writeData, 1024, 1);
+ *      ...
+ * }
+ * @endcode
+ *
+ * @param[in] reqHandle - identifier of the connection.
+ * @param[in] pBuf - client write data buffer pointer.
+ * @param[in] len - length of data to write.
+ * @param[in] isComplete - This parameter is for future support of HTTP/2 or sendung a request with transfer-encoding 
+ *                         chunked.
+ *                         If this is set to 0, then the writeCallback will be invoked again after the data
+ *                         in pBuf is written to the network.
+ *                         If this is set to 1, then the request body is complete.
+ *
+ * @return #IOT_HTTPS_OK if write successfully, failure code otherwise.
+ *         #IOT_HTTPS_MESSAGE_FINISHED if this function is called a second time in the same callback context 
+ *         #IotHttpsClientCallbacks_t.writeCallback.
+ *         #IOT_HTTPS_NOT_SUPPORTED if isComplete is set to 0.
+ *         #IOT_HTTPS_INVALID_PARAMETER if this API is used for a synchronous request.
+ *         #IOT_HTTPS_NETWORK_ERROR if there was an error sending the data on the network.
+ *         Please see #IotHttpsReturnCode_t for other failure codes.
+ */
+/* @[declare_https_client_writerequestbody] */
+IotHttpsReturnCode_t IotHttpsClient_WriteRequestBody(IotHttpsRequestHandle_t reqHandle, char *pBuf, uint32_t len, int isComplete);
+/* @[declare_https_client_writerequestbody] */
 
 /**
  * @brief Synchronous send of the the HTTPS request.
@@ -324,6 +387,11 @@ IotHttpsReturnCode_t IotHttpsClient_AddHeader(IotHttpsRequestHandle_t reqHandle,
  * To receive feedback on headers discarded debug logging must be turned on in iot_config.h by setting 
  * IOT_LOG_LEVEL_HTTPS is set to IOT_LOG_DEBUG.
  * 
+ * This function is thread-safe. If two application threads with the same connection try to send requests synchronously,
+ * then the second application thread will block until the first is finished using the connection. If there is an 
+ * asynchronous request/response being processing on the same connection that this function is invoked with, then this
+ * function will block until the asynchronous request/response is finished. 
+ * 
  * @param[in out] pConnHandle - Handle from an HTTPS connection. If points to NULL then an implicit connection will be made.
  * @param[in] reqHandle - Handle from a request created with IotHttpsClient_initialize_request.
  * @param[out] pRespHandle - HTTPS response handle resulting from a successful send and receive.
@@ -339,6 +407,102 @@ IotHttpsReturnCode_t IotHttpsClient_AddHeader(IotHttpsRequestHandle_t reqHandle,
 /* @[declare_https_client_sendsync] */
 IotHttpsReturnCode_t IotHttpsClient_SendSync(IotHttpsConnectionHandle_t* pConnHandle, IotHttpsRequestHandle_t reqHandle, IotHttpsResponseHandle_t * pRespHandle);
 /* @[declare_https_client_sendsync] */
+
+/**
+ * @brief Asynchronous send of the the HTTPS request.
+ * 
+ * #IotHttpsRequestInfo_t.pAsyncInfo must have been configured to send a request synchronously. If the
+ * request was configured with #IotHttpsRequestInfo.pSyncInfo instead, invoking this function will have 
+ * undefined behavior.
+ * 
+ * This function will invoke each of the non-NULL callbacks configured in #IotHttpsAsyncRequestInfo_t.callbacks when the
+ * schedules asynchronous request is progress. Please see #IotHttpsClientCallbacks_t for information on each of the 
+ * callbacks. 
+ * 
+ * After this API is executed, the scheduled async response response will store the response headers, as received from 
+ * the network, in the header buffer space configured in #IotHttpsRequestInfo_t.respUserBuffer. If the 
+ * configured #IotHttpsRequestInfo_t.respUserBuffer is too small to fit the headers received, then headers that don't 
+ * fit will be thrown away. Please see #responseUserBufferMinimumSize for information about sizing the 
+ * #IotHttpsRequestInfo_t.respUserBuffer.
+ * 
+ * If reqHandle was created in @ref https_client_function_initializerequest with #IotHttpsRequestInfo_t.pConnInfo not 
+ * NULL, then pConnHandle is an OUT paramter and a new connection will be made. 
+ * If a reqHandle was created in @ref https_client_function_initializerequest with pConnInfo set to NULL, then
+ * pConnHandle is an IN parameter that is valid and must have been created with @ref https_client_function_connect.
+ * 
+ * @param[in out] pConnHandle - Handle from an HTTPS connection. If points to NULL then an implicit connection will be made.
+ * @param[in] reqHandle - Handle from a request created with IotHttpsClient_initialize_request.
+ * @param[out] pRespHandle - HTTPS response handle.
+ * 
+ * @return  IOT_HTTPS_OK - if the request was sent and the response was received successfully.
+ *          IOT_HTTPS_MESSAGE_TOO_LARGE if the response cannot fit in the configured 
+ *              IotHttpsRequestHandle_t.response_message.headers and IotHttpsRequestHandle_t.response_message.body.
+ *          #IOT_HTTPS_CONNECTION_ERROR if the connection failed.
+ *          Please see #IotHttpsReturnCode_t for other failure codes.
+ */
+/* @[declare_https_client_sendasync] */
+IotHttpsReturnCode_t IotHttpsClient_SendAsync(IotHttpsConnectionHandle_t* pConnHandle, IotHttpsRequestHandle_t reqHandle, IotHttpsResponseHandle_t * pRespHandle);
+/* @[declare_https_client_sendasync] */
+
+/**
+ * @brief Cancel an Asynchronous request or response.
+ * 
+ * This will stop an asynchronous request.
+ * 
+ * If this is called before the asynchronous request that is scheduled runs, the request will not be sent. If this is 
+ * called during ANY of the asynchronous callbacks, then the request/response will stop processing when the callback
+ * returns. This is useful for any error conditions, found during the asynchronous callbacks, where the application 
+ * wants to stop the rest of the request processing.
+ * 
+ * If the asynchronous request stops processing, the buffers configured in #IotHttpsRequestInfo_t.reqUserBuffer and 
+ * #IotHttpsRequestInfo_t.respUserBuffer can be freed, modified, or reused only after the 
+ * #IotHttpsClientCallbacks_t.responseCompleteCallback returns.
+ * 
+ * <b> Example Asynchronous Code </b>
+ * @code{c}
+ * void _applicationDefined_appendHeaderCallback(void * pPrivData, IotHttpsRequestHandle_t reqHandle)
+ * {
+ *      char token[MAX_TOKEN_LENGTH] = { 0 }
+ *      int len = MAX_TOKEN_LENGTH;
+ *      int status = gen_auth_token(token, &len);
+ *      if( status == GEN_TOKEN_FAIL)
+ *      {
+ *          IotHttpsClient_CancelRequestAsync(reqHandle, NULL);
+ *      }
+ *      ...
+ * }
+ * 
+ * void _applicationDefined_writeCallback(void * pPrivData, IotHttpsRequestHandle_t reqHandle)
+ * {
+ *      if( application_data_get(writeBuffer, writeBufferLen) == GEN_TOKEN_FAIL)
+ *      {
+ *          IotHttpsClient_CancelRequestAsync(reqHandle, NULL);
+ *      }
+ *      ...
+ * }
+ * 
+ * void applicationDefined_readReadyCallback(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status)
+ * {
+ *      ...
+ *      if (status != IOT_HTTPS_STATUS_OK)
+ *      {
+ *          IotHttpsClient_CancelRequestAsync(NULL, respHandle);
+ *      }
+ *      ...
+ * }
+ * @endcode
+ * 
+ * @param[in] reqHandle - Request handle associated with the request. Set this to NULL if only the respHandle is 
+ *              available.
+ * @param[in] respHandle - Response handle associated with the request. Set this to NULL if only the reqHandle is 
+ *              available.
+ * 
+ * @return #IOT_HTTPS_OK - If the request was successfully cancelled.
+ *         Error code otherwise, please see #IotHttpsReturnCode_t for for failure codes.
+ */
+/* @[declare_https_client_cancelrequestasync] */
+IotHttpsReturnCode_t IotHttpsClient_CancelRequestAsync(IotHttpsRequestHandle_t reqHandle, IotHttpsResponseHandle_t respHandle);
+/* @[declare_https_client_cancelrequestasync] */
 
 /**
  * @brief Retrieve the HTTPS response status.
@@ -363,6 +527,22 @@ IotHttpsReturnCode_t IotHttpsClient_SendSync(IotHttpsConnectionHandle_t* pConnHa
  *      ...
  * @endcode
  * 
+ * For an asynchronous response the response status is the status parameter in 
+ * #IotHttpsClientCallbacks_t.readReadyCallback and #IotHttpsClientCallbacks_t.responseCompleteCallback. The application
+ * should refer to that instead of using this function.
+ * <b> Example Asynchronous Code </b>
+ * @code
+ * void applicationDefined_readReadyCallback(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status)
+ * {
+ *      ...
+ *      if (status != IOT_HTTPS_STATUS_OK)
+ *      {
+ *          // Handle error server response status. 
+ *      }
+ *      ...
+ * }
+ * @endcode
+ * 
  * param[in] respHandle - Unique handle representing the HTTPS response.
  * param[out] pStatus - Integer status returned from the server response.
  * 
@@ -383,6 +563,21 @@ IotHttpsReturnCode_t IotHttpsClient_ReadResponseStatus(IotHttpsResponseHandle_t 
  * encoded response (For example, "Transfer-Encoding: chunked") or the "Content-Length" header was far down in the list 
  * of response  headers and could not fit into the header buffer configured in #IotHttpsRequestInfo_t.respUserBuffer. 
  * Please see #responseUserBufferMinimumSize for information about sizing the #IotHttpsRequestInfo_t.respUserBuffer.
+ * 
+ * In the asynchronous request process, the Content-Length is not available until the 
+ * #IotHttpsClientCallbacks_t.readReadyCallback. Before the #IotHttpsClientCallbacks_t.readReadyCallback is invoked, the
+ * headers are read into as much as can fit in in the header buffer space of #IotHttpsRequestInfo_t.respUserBuffer.
+ * <b> Example Asynchronous Code </b>
+ * @code{c}
+ * void applicationDefined_readReadyCallback(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status)
+ * {
+ *      uint8_t * readBuffer = NULL;
+ *      uint32_t contentLength = 0;
+ *      IotHttpsClient_ReadContentLength(respHandle, &contentLength);
+ *      readBuffer = (uint8_t*)malloc(contentLength);
+ *      ...
+ * }
+ * @endcode
  * 
  * In a synchronous request process, the Content-Length is available after @ref https_client_function_sendsync has 
  * returned successfully.
@@ -420,6 +615,20 @@ IotHttpsReturnCode_t IotHttpsClient_ReadContentLength( IotHttpsResponseHandle_t 
  * This routine parses the formatted HTTPS header lines in the header buffer for the header field name specified. If the
  * header is not available, then #IOT_HTTPS_NOT_FOUND is returned.
  * 
+ * For an asynchronous response, this routine is to be called during the #IotHttpsClientCallbacks_t.readReadyCallback.
+ * Before the #IotHttpsClientCallbacks_t.readReadyCallback is invoked, the
+ * headers are read into as much as can fit in in the header buffer space of #IotHttpsRequestInfo_t.respUserBuffer.
+ * <b> Example Asynchronous Code </b>
+ * @code{c}
+ * void applicationDefined_readReadyCallback(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status)
+ * {
+ *      ...
+ *      char valueBuf[64];
+ *      IotHttpsClient_ReadHeader(respHandle, "Content-Type", valueBuf, sizeof(valueBuf));
+ *      ...
+ * }
+ * @endcode
+ * 
  * For a syncrhonous response, this routine is to be called after @ref https_client_function_sendsync has 
  * returned successfully.
  * <b> Example Synchronous Code </b>
@@ -446,5 +655,46 @@ IotHttpsReturnCode_t IotHttpsClient_ReadContentLength( IotHttpsResponseHandle_t 
 /* @[declare_https_client_readheader] */
 IotHttpsReturnCode_t IotHttpsClient_ReadHeader(IotHttpsResponseHandle_t respHandle, char *pName, char *pValue, uint32_t len);
 /* @[declare_https_client_readheader] */
+
+/**
+ * @brief Read the HTTPS response body from the network.
+ * 
+ * This is intended to be used an asynchronous response, this is to be invoked during the 
+ * #IotHttpsClientCallbacks_t.readReadyCallback to read data directly from the network into pBuf.
+ * <b> Example Asynchronous Code </b>
+ * @code{c}
+ * void applicationDefined_readReadyCallback(void * pPrivData, IotHttpsRequestHandle_t handle, IotHttpsReturnCode_t rc, uint16_t status)
+ * {
+ *      ...
+ *      char * myBuf = STORE_ADDRESS;
+ *      uint32_t len = STORE_READ_SIZE;
+ *      IotHttpsClient_ReadResponseBody(handle, myBuf, &len);
+ *      ...
+ * }
+ * @endcode
+ * 
+ * For a syncrhonous response, to retrieve the response body applications must directly refer to the 
+ * #pSyncInfo_t.pRespData configured in #IotHttpsRequestInfo_t.pSyncInfo_t. Otherwise this function will return an 
+ * #IOT_HTTPS_INVALID_PARAMETER error code. This function is intended to read the response entity body from the network 
+ * and the synchronous response process handles all of that in @ref https_client_function_sendsync.
+ * 
+ * @endcode
+ * 
+ * @param[in] respHandle - Unique handle representing the HTTPS response.
+ * 
+ * @param[out] pBuf - Pointer to the response body memory location. This is not a char* because the body may have binary data.
+ * 
+ * @param[in out] pLen - The length of the response to read. This should not exceed the size of the buffer that we are 
+ *                   reading into. This will be replace with the amount of data read upon return.
+ * 
+ * @return #IOT_HTTPS_OK if the response body was successfully retrieved.
+ *         #IOT_HTTPS_INVALID_PARAMETER if there are NULL parameters or if the response is a synchronous type.
+ *         #IOT_HTTPS_NETWORK_ERROR if there was an error sending the data on the network.
+ *         #IOT_HTTPS_PARSING_ERROR if there was an error parsing the HTTP response.
+ *         Please see #IotHttpsReturnCode_t for other failure codes.
+ */
+/* @[declare_https_client_readresponsebody] */
+IotHttpsReturnCode_t IotHttpsClient_ReadResponseBody(IotHttpsResponseHandle_t respHandle, uint8_t * pBuf, uint32_t *pLen);
+/* @[declare_https_client_readresponsebody] */
 
 #endif /* IOT_HTTPS_CLIENT_ */

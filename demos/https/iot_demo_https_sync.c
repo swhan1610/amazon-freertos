@@ -100,7 +100,7 @@
 /* Size in bytes of the User Buffer used to store the internal connection context. The size presented here accounts for
    storage of the internal connection context. The minimum size can be found in extern const unint32_t connectionUserBufferMinimumSize. */
 #ifndef IOT_DEMO_HTTPS_CONN_BUFFER_SIZE
-    #define IOT_DEMO_HTTPS_CONN_BUFFER_SIZE         ( 300 )
+    #define IOT_DEMO_HTTPS_CONN_BUFFER_SIZE         ( 512 )
 #endif
 
 /* Size in bytes of the user buffer used to store the internal request context and HTTP request header lines. 
@@ -329,6 +329,7 @@ int RunHttpsSyncDemo( bool awsIotMqttMode,
     reqConfig.reqUserBuffer.bufferLen = sizeof(_pReqUserBuffer);
     reqConfig.respUserBuffer.pBuffer = _pRespUserBuffer;
     reqConfig.respUserBuffer.bufferLen = sizeof(_pRespUserBuffer);
+    reqConfig.isAsync = false;
     reqConfig.pSyncInfo = &syncInfo;
     /* We will implicitly connect in the first call to IotHttpsClient_SendSync(). */
     reqConfig.pConnInfo = &connConfig;

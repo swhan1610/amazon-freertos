@@ -359,6 +359,129 @@ enum IotHttpsResponseStatus
 
 /**
  * @ingroup https_client_datatypes_paramstructs
+ * 
+ * @brief HTTPS Client library callbacks for asynchronous requests.
+ * 
+ * @paramfor @ https_client_function_initialize_request
+ * 
+ * This type is a parameter in #IotHttpsResponseInfo_t.pAsyncInfo.callbacks.
+ * 
+ * If any of the members in this type are set to NULL, then they will not be invoked during the asynchronous 
+ * request/response process.
+ */
+typedef struct IotHttpsClientCallbacks
+{
+    /**
+     * @brief User-provided callback function signature for appending a header to current asynchronous request. 
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * See @ref https_client_function_addheader for more information on adding a header in this callback.
+     * 
+     * Appending the header when request is in progress is good for things like time limitted authentication tokens.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] reqHandle - The handle for the current HTTP request in progress.
+     */
+    void (* appendHeaderCallback )(void * pPrivData, IotHttpsRequestHandle_t reqHandle);
+
+    /**
+     * @brief User-provided callback function signature for writing data to the network for a current asynchronous 
+     * request.
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * See @ref https_client_function_writerequestbody for more information on writing request body.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] reqHandle - The handle for the current HTTP request in progress.
+     */
+    void (* writeCallback)(void * pPrivData, IotHttpsRequestHandle_t reqHandle);
+
+    /**
+     * @brief User-provided callback function signature for reading data from the network for a current asynchronous 
+     * response.
+     * 
+     * The network indicated that after sending the associated request, the response is available for reading. 
+     * If this is set to NULL, then it will not be invoked.
+     * See @ref https_client_function_readresponsebody for more information about reading the response body in this
+     * callback.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] respHandle - The handle for the current HTTP response in progress.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     * @param[in] status - The HTTP response status code of the current response in progress.
+     */
+    void (* readReadyCallback)(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status);
+
+    /**
+     * @brief User-provided callback function signature to indicate that the asynchronous response is completed.
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * 
+     * This callback is invoked when the response is fully received from the network and the request/response pair is 
+     * complete. After this function returns any memory configured in #IotHttpsRequestInfo_t.reqUserBuffer and
+     * #IotHttpsRequestInfo_t.respUserBuffer can be freed, modified, or reused
+     * 
+     * For a non-persistent connection, the connection will be closed first before invoking this callback.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] respHandle - The handle for the current HTTP response in progress.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     * @param[in] status - The HTTP response status code of the current response in progress.
+     */
+    void (* responseCompleteCallback)(void * pPrivData, IotHttpsResponseHandle_t respHandle, IotHttpsReturnCode_t rc, uint16_t status);
+    
+    /**
+     * @brief User-provided callback function signature to indicate that the asynchronous connection as been 
+     * established.
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] connHandle - The handle for the current HTTP connection.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     */
+    void (* connectionEstablishedCallback)(void * pPrivData, IotHttpsConnectionHandle_t connHandle, IotHttpsReturnCode_t rc);
+
+    /**
+     * @brief User-provided callback function signature to indicate that the asynchronous connection has been closed.
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * If there are errors during sending/receiving in the asynchronous process, the connection is not automatically
+     * closed. If the server closes the connection during the asynchronous process, this callback is not invoked.
+     * This callback is invoked only if the connection was flagged as non-persistent in 
+     * #IotHttpsConnectionInfo_t.flags.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] connHandle - The handle for the current HTTP connection.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     */
+    void (* connectionClosedCallback)(void * pPrivData, IotHttpsConnectionHandle_t connHandle, IotHttpsReturnCode_t rc);
+
+    /**
+     * @brief User-provided callback function signature to indicate that a timeout occurred connecting to the server.
+     * 
+     * If this is set to NULL, then it will not be invoked.
+     * If a timeout occurs during the connection process it will be available in rc as IOT_HTTPS_CONNECTION_ERROR.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] connHandle - The handle for the current HTTP connection.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     */
+    void (* connectionTimeoutCallback)(void * pPrivData, IotHttpsConnectionHandle_t connHandle, IotHttpsReturnCode_t rc);
+    
+    /**
+     * @brief User-provided callback function signature to indicate that an error occurred during the asynchronous 
+     * process.
+     * 
+     * @param[in] pPrivData - User context configured in #IotHttpsAsyncRequestInfo_t.pPrivData
+     * @param[in] reqHandle - The handle for the current HTTP request.
+     * @param[in] rc - A return code indicating any errors before this callback was invoked.
+     */
+    void(* errorCallback)(void * pPrivData, IotHttpsRequestHandle_t reqHandle, IotHttpsReturnCode_t rc);
+} IotHttpsClientCallbacks_t;
+
+/**
+ * @ingroup https_client_datatypes_paramstructs
  * @brief User-provided buffer for storing the HTTPS headers and library internal context. 
  * 
  * @paramfor @ref https_client_function_initializerequest. 
@@ -583,8 +706,24 @@ typedef struct IotHttpsRequestInfo
      * Please see #IotHttpsUserBuffer_t for more information.
      */
     IotHttpsUserBuffer_t respUserBuffer;
+
+    /**
+     * @brief Indicator if this request is sync or async.
+     * 
+     * Set this to false to use a synchronous request. Set this to true to use an asynchronous request.
+     */
+    bool isAsync;
     
-    IotHttpsSyncRequestInfo_t *pSyncInfo; /**< @brief Information specifically for synchronous requests. There will be future support of asynchronous requests. */
+    /**
+     * @brief Specific information for either a synchronous request or an asynchronous request.
+     * 
+     * See #IotHttpsAsyncRequestInfo_t for information on the pAsyncInfo.
+     * See #IotHttpsSyncRequestInfo_t for information on the pSyncInfo.
+     */
+    union {
+        IotHttpsAsyncRequestInfo_t *pAsyncInfo;  /**< @brief Information specifically for Asynchronous requests. */
+        IotHttpsSyncRequestInfo_t *pSyncInfo;    /**< @brief Information specifically for synchronous requests. */
+    };
 
     /**
      * @brief HTTPS Client connection configuration.
