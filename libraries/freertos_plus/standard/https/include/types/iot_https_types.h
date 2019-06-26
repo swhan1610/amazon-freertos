@@ -538,6 +538,28 @@ typedef struct IotHttpsSyncRequestInfo
     uint32_t respDataLen;                   /**< @brief Length of the response data. */
 } IotHttpsSyncRequestInfo_t;
 
+/**
+ * @ingroup https_client_datatypes_paramstructs
+ * @brief HTTPS Client asynchronous request information.
+ * 
+ * @paramfor @ref https_client_function_initializerequest.
+ * 
+ * This is parameter in #IotHttpsRequestInfo_t.pAsyncInfo.
+ * 
+ * An asynchronous request will ask the application for headers and body right before the request is ready 
+ * to be sent onto the network. 
+ * An asynchronous request will have the application read headers and body as soon as the response is received
+ * on the network.
+ */
+typedef struct IotHttpsAsyncRequestInfo
+{
+    /**
+     * @brief Callbacks are used for an asynchronous request. 
+     * See #IotHttpsClientCallbacks_t for more information.
+     */
+    IotHttpsClientCallbacks_t callbacks;
+    void * pPrivData; /**< @brief User private data to provide context to the asynchronous callbacks. */
+} IotHttpsAsyncRequestInfo_t;
 
 /**
  * @ingroup https_client_datatypes_paramstructs

@@ -49,7 +49,10 @@
  * A presigned URL is required to run this demo. Please see the demos/https/README.md for instructions on how to 
  * generate one.
  * 
- * The file is downloaded incrementally using HTTP Partial Content headers. 
+ * The file is downloaded incrementally using HTTP Partial Content headers. This is done by requesting ranges of the 
+ * bytes in a file with the header: "Range: bytes=N-M", where N is the starting range and M is the ending range. The
+ * S3 HTTP server will response with a 206 Partial Content type of response and the file byte range requested. Please 
+ * note that not all HTTP servers support a Partial Content download with a byte range.
  */
 
 /**
@@ -551,10 +554,16 @@ static int _getS3ObjectFileSize(
     /* The status of HTTP response for this request. */
     uint16_t respStatus = IOT_HTTPS_STATUS_OK;
 
-    /* String to store the Content-Range header field value. */
-    char contentRangeValStr[31] = { 0 }; /* length of 2^32 * 2 + strlen(bytes 0-0/) + NULL terminator */
+
+    /* String to store the Content-Range header field value. This header field as we are requesting in this demo is of 
+       the form: "Content-Range: bytes 0-0/FILESIZE", where file size would be the length of the maximum 32 bit integer
+       which is 10.  Since the header field value "bytes 0-0/FILESIZE" is less than the maximum possible Range header
+       field value, we size this string to the Range header field value.*/
+    char contentRangeValStr[RANGE_VALUE_MAX_LENGTH] = { 0 };
     /* The location of the file size in the contentRangeValStr. */
-    char * fileSizeStr = NULL;
+    char * pFileSizeStr = NULL;
+    /* Size in bytes of a single character. */
+    uint8_t sizeOfOneChar = 1;
 
     /* We are retrieving the file size synchronously because we cannot run this demo without the file size anyways
        so it's OK to block. */
@@ -629,8 +638,8 @@ static int _getS3ObjectFileSize(
         IotLogError("Could find the Content-Range header in the response. Error code %d",httpsClientStatus);
         return EXIT_FAILURE;
     }
-    fileSizeStr = strstr( contentRangeValStr, "/" ) + 1;
-    *fileSize = (uint32_t)strtoul(fileSizeStr, NULL, 10);
+    pFileSizeStr = strstr( contentRangeValStr, "/" ) + sizeOfOneChar;
+    *fileSize = (uint32_t)strtoul(pFileSizeStr, NULL, 10);
 
     return EXIT_SUCCESS;
 }
@@ -671,7 +680,7 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
     /* Configurations for the HTTPS connection. */
     IotHttpsConnectionInfo_t connConfig = { 0 };
     /* Handle identifying the HTTPS connection. */
-    IotHttpsConnectionHandle_t connHandle = NULL;
+    IotHttpsConnectionHandle_t connHandle = IOT_HTTPS_CONNECTION_HANDLE_INITIALIZER;
     /* Asynchronous request specific configurations. */
     IotHttpsAsyncRequestInfo_t asyncInfo = { 0 };
 
@@ -719,8 +728,7 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
     connConfig.clientCertLen = ( ( IotNetworkCredentials_t* )pNetworkCredentialInfo )->clientCertSize;
     connConfig.pPrivateKey = ( ( IotNetworkCredentials_t* )pNetworkCredentialInfo )->pPrivateKey;
     connConfig.privateKeyLen = ( ( IotNetworkCredentials_t* )pNetworkCredentialInfo )->privateKeySize;
-    connConfig.pNetworkInterface = (void*)pNetworkInterface;
-    connConfig.timeout = 10000;
+    connConfig.pNetworkInterface = pNetworkInterface;
 
     /* Set the configurations needed for an asynchronous request. */
     asyncInfo.callbacks.appendHeaderCallback = _appendHeaderCallback;
