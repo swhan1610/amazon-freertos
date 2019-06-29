@@ -590,24 +590,26 @@ typedef struct IotHttpsConnectionInfo
      * @brief Flags to configure the HTTPS connection.
      * 
      * See @constantspage{https_client,HTTPS Client library} for the available flags.
+     * 
+     * Unknown flags are ignored.
      */
     uint32_t flags;          /**< @brief Flags to configure the HTTPS connection. */
 
     /**
-     * @brief Timeout for this connection and waiting for a response from the network in milliseconds.
+     * @brief Timeout waiting for a response from the network in milliseconds.
      * 
      * If this is set to zero, it will default to IOT_HTTPS_RESPONSE_WAIT_MS.
      */
     uint32_t timeout;
 
-    const char* pCaCert;     /**< @brief Server trusted certificate store for this connection */
-    uint32_t caCertLen;     /**< @brief Server trusted certificate store size */
+    const char* pCaCert;        /**< @brief Server trusted certificate store for this connection. */
+    uint32_t caCertLen;         /**< @brief Server trusted certificate store size. */
 
-    const char* pClientCert; /**< @brief Client certificate store for this connection. */
-    uint32_t clientCertLen; /**< @brief Client certificate store size. */
+    const char* pClientCert;    /**< @brief Client certificate store for this connection. */
+    uint32_t clientCertLen;     /**< @brief Client certificate store size. */
 
-    const char* pPrivateKey; /**< @brief Client private key store for this connection. */
-    uint32_t privateKeyLen; /**< @brief Client private key store size. */
+    const char* pPrivateKey;    /**< @brief Client private key store for this connection. */
+    uint32_t privateKeyLen;     /**< @brief Client private key store size. */
 
     /** 
      * @brief String of all the ALPN protocols separated by commas needed for this connection. 
@@ -676,7 +678,7 @@ typedef struct IotHttpsRequestInfo
 {
     /* The path and the method are used to generate the first request line in the HTTP request message. See 
        @ref https_client_function_initializerequest for more information. */
-    const char *pPath;                  /**< @brief URI path, e.g., "/v20160207/directives?query" */
+    const char *pPath;                  /**< @brief URI path, e.g., "/v20160207/directives?query". If this is NULL, a "/" will be added to the request line automaticaly. */
     uint32_t pathLen;                   /**< @brief URI path length */
     IotHttpsMethod_t method;            /**< @brief HTTP method. See #IotHttpsMethod_t for the list of available methods. */
 
