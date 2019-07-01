@@ -677,7 +677,7 @@ static int _httpParserOnBodyCallback(http_parser * pHttpParser, const char * pLo
             /* Only copy the data if the current location is not the bodyCur. Also only copy if the length does not
                exceed the body buffer. This might happen, only in the synchronous workflow, if the header buffer is 
                larger than the body buffer and receives entity body larger than the body bufffer. */
-            if( (_httpsResponse->pBodyCur != pLoc) && ( (_httpsResponse->pBodyCur + length) <= _httpsResponse->pBodyEnd ) )
+        if( (_httpsResponse->pBodyCur != (uint8_t*)pLoc) && ( (_httpsResponse->pBodyCur + length) <= _httpsResponse->pBodyEnd ) )
             {
                 memcpy(_httpsResponse->pBodyCur, pLoc, length);
             }
@@ -1871,88 +1871,87 @@ IotHttpsReturnCode_t IotHttpsClient_SendSync(IotHttpsConnectionHandle_t *pConnHa
     _httpsConnection = *pConnHandle;
 
     /* Lock the entire connection for sending the request and receiving the response. */
-    if( IotSemaphore_TimedWait( &(_httpsConnection->connSem), IOT_HTTPS_MAX_CONN_USAGE_WAIT_MS ) == true )
-    {
-        /* Send the headers first. Because the HTTPS body is in a separate pointer. */
-        status = _sendHttpsHeaders( _httpsConnection,
-            reqHandle->pHeaders,
-            reqHandle->pHeadersCur - reqHandle->pHeaders,
-            reqHandle->isNonPersistent,
-            reqHandle->bodyLength);
-
-        if( status != IOT_HTTPS_OK )
-        {
-            IotLogError("Error sending the HTTPS headers in the request user buffer. Error code: %d", status);
-            IOT_GOTO_CLEANUP();
-        }
-
-        /* Send the body now if it exists. */
-        if(reqHandle->pBody != NULL)
-        {
-            status = _sendHttpsBody( _httpsConnection, reqHandle->pBody, reqHandle->bodyLength);
-            if( status != IOT_HTTPS_OK )
-            {
-                IotLogError("Error sending final HTTPS body. Return code: %d", status);
-                IOT_GOTO_CLEANUP(); 
-            }
-        }
-
-        /* Wait for the network to have data to read.*/
-        if( IotSemaphore_TimedWait( &( _httpsConnection->rxStartSem ), _httpsConnection->timeout ) == false )
-        {
-            IotLogError( "Timed out waiting for a response from the network." );
-            status = IOT_HTTPS_TIMEOUT_ERROR;
-            IOT_GOTO_CLEANUP();
-        }
-
-        status = _receiveHttpsHeaders( _httpsConnection, _httpsResponse, &networkStatus);
-        if(status != IOT_HTTPS_OK)
-        {
-            IotLogError("Error in receiving the HTTPS headers into user header buffer at 0x%x. Error code: %d. Network error %d.", _httpsResponse->pHeaders, status, networkStatus);
-            IOT_GOTO_CLEANUP(); 
-        }
-
-        if( _httpsResponse->parserState < PARSER_STATE_HEADERS_COMPLETE )
-        {
-            IotLogDebug( "Headers received on the network did not all fit into the configured header buffer. The length of the headers buffer is: %d",
-                _httpsResponse->pHeadersEnd - _httpsResponse->pHeaders );
-            /* It is not error if the headers did not all fit into the buffer. */
-        }
-
-        /* The header buffer is now filled or the end of the headers has been reached already. If part of the response
-           body was read from the network into the header buffer, then it was already copied to the body buffer in the 
-           _httpParserOnBodyCallback(). */
-        if(_httpsResponse->pBody != NULL)
-        {
-            /* If there is room left in the body buffer, then try to receive more. */
-            if( (_httpsResponse->pBodyEnd - _httpsResponse->pBodyCur) > 0 )
-            {
-                status = _receiveHttpsBody( _httpsConnection,
-                    _httpsResponse,
-                    &networkStatus );
-                if( status != IOT_HTTPS_OK )
-                {
-                    IotLogError( "Error receiving the HTTPS response body. Error code: %d. Network status %d.", status, networkStatus );
-                    IOT_GOTO_CLEANUP();
-                }
-            }
-
-            /* If we don't reach the end of the HTTPS body in the parser, then we only received part of the body.
-               The rest of body will be on the socket. */
-            if( _httpsResponse->parserState < PARSER_STATE_BODY_COMPLETE )
-            {
-                IotLogError( "HTTPS response body does not fit into application provided response buffer at location 0x%x with length: %d",
-                    _httpsResponse->pBody,
-                    _httpsResponse->pBodyEnd - _httpsResponse->pBody );
-                status = IOT_HTTPS_MESSAGE_TOO_LARGE;
-                IOT_GOTO_CLEANUP();
-            }
-        }
-    }
-    else
+    if( IotSemaphore_TimedWait( &(_httpsConnection->connSem), IOT_HTTPS_MAX_CONN_USAGE_WAIT_MS ) == false )
     {
         IotLogError("Timed out in sync send waiting on the connection handle to be free. The current timeout is %d.", IOT_HTTPS_MAX_CONN_USAGE_WAIT_MS);
         status = IOT_HTTPS_BUSY;
+        IOT_GOTO_CLEANUP();
+    }
+
+    /* Send the headers first. Because the HTTPS body is in a separate pointer. */
+    status = _sendHttpsHeaders( _httpsConnection,
+        reqHandle->pHeaders,
+        reqHandle->pHeadersCur - reqHandle->pHeaders,
+        reqHandle->isNonPersistent,
+        reqHandle->bodyLength);
+
+    if( status != IOT_HTTPS_OK )
+    {
+        IotLogError("Error sending the HTTPS headers in the request user buffer. Error code: %d", status);
+        IOT_GOTO_CLEANUP();
+    }
+
+    /* Send the body now if it exists. */
+    if(reqHandle->pBody != NULL)
+    {
+        status = _sendHttpsBody( _httpsConnection, reqHandle->pBody, reqHandle->bodyLength);
+        if( status != IOT_HTTPS_OK )
+        {
+            IotLogError("Error sending final HTTPS body. Return code: %d", status);
+            IOT_GOTO_CLEANUP(); 
+        }
+    }
+
+    /* Wait for the network to have data to read.*/
+    if( IotSemaphore_TimedWait( &( _httpsConnection->rxStartSem ), _httpsConnection->timeout ) == false )
+    {
+        IotLogError( "Timed out waiting for a response from the network." );
+        status = IOT_HTTPS_TIMEOUT_ERROR;
+        IOT_GOTO_CLEANUP();
+    }
+
+    status = _receiveHttpsHeaders( _httpsConnection, _httpsResponse, &networkStatus);
+    if(status != IOT_HTTPS_OK)
+    {
+        IotLogError("Error in receiving the HTTPS headers into user header buffer at 0x%x. Error code: %d. Network error %d.", _httpsResponse->pHeaders, status, networkStatus);
+        IOT_GOTO_CLEANUP(); 
+    }
+
+    if( _httpsResponse->parserState < PARSER_STATE_HEADERS_COMPLETE )
+    {
+        IotLogDebug( "Headers received on the network did not all fit into the configured header buffer. The length of the headers buffer is: %d",
+            _httpsResponse->pHeadersEnd - _httpsResponse->pHeaders );
+        /* It is not error if the headers did not all fit into the buffer. */
+    }
+
+    /* The header buffer is now filled or the end of the headers has been reached already. If part of the response
+        body was read from the network into the header buffer, then it was already copied to the body buffer in the 
+        _httpParserOnBodyCallback(). */
+    if(_httpsResponse->pBody != NULL)
+    {
+        /* If there is room left in the body buffer, then try to receive more. */
+        if( (_httpsResponse->pBodyEnd - _httpsResponse->pBodyCur) > 0 )
+        {
+            status = _receiveHttpsBody( _httpsConnection,
+                _httpsResponse,
+                &networkStatus );
+            if( status != IOT_HTTPS_OK )
+            {
+                IotLogError( "Error receiving the HTTPS response body. Error code: %d. Network status %d.", status, networkStatus );
+                IOT_GOTO_CLEANUP();
+            }
+        }
+
+        /* If we don't reach the end of the HTTPS body in the parser, then we only received part of the body.
+            The rest of body will be on the socket. */
+        if( _httpsResponse->parserState < PARSER_STATE_BODY_COMPLETE )
+        {
+            IotLogError( "HTTPS response body does not fit into application provided response buffer at location 0x%x with length: %d",
+                _httpsResponse->pBody,
+                _httpsResponse->pBodyEnd - _httpsResponse->pBody );
+            status = IOT_HTTPS_MESSAGE_TOO_LARGE;
+            IOT_GOTO_CLEANUP();
+        }
     }
 
     IOT_FUNCTION_CLEANUP_BEGIN();
