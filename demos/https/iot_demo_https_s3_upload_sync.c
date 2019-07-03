@@ -271,7 +271,7 @@ int RunHttpsSyncUploadDemo( bool awsIotMqttMode,
     connConfig.pNetworkInterface = pNetworkInterface;
 
     /* Set the configurations needed for a synchronous request. */
-    syncInfo.pReqData = IOT_DEMO_HTTPS_UPLOAD_DATA;     /* Pointer to the file/buffer of data we want to upload. */
+    syncInfo.pReqData = (uint8_t*)(IOT_DEMO_HTTPS_UPLOAD_DATA);     /* Pointer to the file/buffer of data we want to upload. */
     syncInfo.reqDataLen = IOT_DEMO_HTTPS_UPLOAD_DATA_SIZE;
     syncInfo.pRespData = _pRespBodyBuffer;              /* S3 will have some data in the body to the upload 
                                                            acknowledgement. It might be interesting. */

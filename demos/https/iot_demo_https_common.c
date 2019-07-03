@@ -30,6 +30,9 @@
 /* The config header is always included first. */
 #include "iot_config.h"
 
+/* C Standard headers. */
+#include <string.h>
+
 /* Common header. */
 #include "iot_demo_https_common.h"
 
@@ -73,9 +76,9 @@
 int _IotHttpsDemo_GetS3ObjectFileSize(
     uint32_t* pFileSize,
     IotHttpsConnectionHandle_t* pConnHandle,
-    char * pPath,
+    const char * pPath,
     uint32_t pathLen,
-    char * pAddress,
+    const char * pAddress,
     uint32_t addressLen,
     IotHttpsConnectionInfo_t * pConnInfo,
     uint8_t * pReqUserBuffer,
