@@ -1,4 +1,5 @@
 /*
+ * Amazon FreeRTOS V201906.00 Major
  * Copyright (C) 2019 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -17,6 +18,9 @@
  * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
  * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * http://aws.amazon.com/freertos
+ * http://www.FreeRTOS.org
  */
 
 /**
@@ -41,10 +45,12 @@
 #include "platform/iot_network.h"
 #include "platform/iot_threads.h"
 #include "private/iot_error.h"
+#include "iot_demo_https_common.h"
 
 /**
  * This demonstates downloading a file from S3 using a pre-signed URL using the Amazon FreeRTOS HTTP Client library.
- * The HTTPS Client library is a HTTP/1.1 client library that be used to download files from other webservers as well.
+ * The HTTPS Client library is a generic HTTP/1.1 client library that be used to download files from other webservers as
+ * well.
  * 
  * A presigned URL is required to run this demo. Please see the demos/https/README.md for instructions on how to 
  * generate one.
@@ -63,8 +69,8 @@
  */
 
 /* Presigned URL for S3 GET Object access. */
-#ifndef IOT_DEMO_HTTPS_PRESIGNED_URL
-    #define IOT_DEMO_HTTPS_PRESIGNED_URL     "Please configure a presigned URL in iot_config.h."
+#ifndef IOT_DEMO_HTTPS_PRESIGNED_GET_URL
+    #define IOT_DEMO_HTTPS_PRESIGNED_GET_URL     "Please configure a presigned GET URL in iot_config.h."
 #endif
 
 /* TLS port for HTTPS. */
@@ -170,14 +176,6 @@
 #define RANGE_HEADER_FIELD          "Range"
 
 /**
- * @brief HTTP standard header value for requesting a range of bytes from 0 to 0.
- * 
- * This is used to get the size of the file from S3. Performing a HEAD request with S3 requires generating a Sigv4 
- * signature in an Authorization header field. We work around this by performing a GET on Range: bytes=0-0. Then 
- * extracting the size of the file from the Content-Range header field in the response. */
-#define RANGE_0_TO_0_HEADER_VALUE   "bytes=0-0"
-
-/**
  * @brief HTTP standard header field "Content-Range"
  */
 #define CONTENT_RANGE_HEADER_FIELD  "Content-Range"
@@ -273,7 +271,7 @@ static uint32_t _fileSize = 0;
 /*-----------------------------------------------------------*/   
 
 /* Declaration of the demo function. */
-int RunHttpsAsyncDemo( bool awsIotMqttMode,
+int RunHttpsAsyncDownloadDemo( bool awsIotMqttMode,
                  const char * pIdentifier,
                  void * pNetworkServerInfo,
                  void * pNetworkCredentialInfo,
@@ -507,146 +505,6 @@ static void _errorCallback(void * pPrivData, IotHttpsRequestHandle_t reqHandle, 
 /*-----------------------------------------------------------*/   
 
 /**
- * @brief Retrieve the size of the file specified in the presigned S3 URL for this demo.
- * 
- * This routine will create a connection to the S3 bucket. 
- * 
- * @param[in] connHandle - Connection to the S3 bucket.
- * @param[in] pPath - The path to the object in S3 with all query in the presigned URL attached.
- * @param[in] pathLen - The length of pPath.
- * @param[in] pAddress - The address of the S3 host extracted from the presigned S3 URL.
- * @param[in] addressLen - The length of pAddress.
- * @param[in] pConnInfo - HTTPS Client library connection information.
- * @param[in] pReqUserBuffer - Buffer for storing the request context and headers.
- * @param[in] reqUserBufferLen - Length of the request user buffer.
- * @param[in] pRespUserBuffer - Buffer for storing the response context and headers.
- * @param[in] respUserBufferLen - Length of the response user buffer.
- * 
- * @return `EXIT_SUCCESS` if the _fileSize was successfully retrieved; `EXIT_FAILURE` otherwise.
- */
-// TODO: Make this function a shared one among the async and sync.
-static int _getS3ObjectFileSize(
-    uint32_t* fileSize,
-    IotHttpsConnectionHandle_t* pConnHandle,
-    char * pPath,
-    uint32_t pathLen,
-    char * pAddress,
-    uint32_t addressLen,
-    IotHttpsConnectionInfo_t * pConnInfo,
-    uint8_t * pReqUserBuffer,
-    uint32_t reqUserBufferLen,
-    uint8_t * pRespUserBuffer,
-    uint32_t respUserBufferLen)
-{
-    /* Status of HTTPS Client API. */
-    IotHttpsReturnCode_t httpsClientStatus = IOT_HTTPS_OK;
-    /* The HTTPS request configurations for getting the file size. */
-    IotHttpsRequestInfo_t fileSizeReqConfig = { 0 };
-    /* Synchronous request specific configurations. */
-    IotHttpsSyncRequestInfo_t syncInfo = { 0 };
-    /* Handle identifying the HTTP request. This is valid after the request has been initialized with 
-       IotHttpsClient_InitializeRequest(). */
-    IotHttpsRequestHandle_t fileSizeReqHandle = NULL;
-    /* Handle identifying the HTTP response. This is valid after the reponse has been received with 
-       IotHttpsClient_SendSync(). */
-    IotHttpsResponseHandle_t fileSizeRespHandle = NULL;
-
-    /* The status of HTTP response for this request. */
-    uint16_t respStatus = IOT_HTTPS_STATUS_OK;
-
-
-    /* String to store the Content-Range header field value. This header field as we are requesting in this demo is of 
-       the form: "Content-Range: bytes 0-0/FILESIZE", where file size would be the length of the maximum 32 bit integer
-       which is 10.  Since the header field value "bytes 0-0/FILESIZE" is less than the maximum possible Range header
-       field value, we size this string to the Range header field value.*/
-    char contentRangeValStr[RANGE_VALUE_MAX_LENGTH] = { 0 };
-    /* The location of the file size in the contentRangeValStr. */
-    char * pFileSizeStr = NULL;
-    /* Size in bytes of a single character. */
-    uint8_t sizeOfOneChar = 1;
-
-    /* We are retrieving the file size synchronously because we cannot run this demo without the file size anyways
-       so it's OK to block. */
-    syncInfo.pReqData = NULL;    /* This is a GET request so there is no data in the body. */
-    syncInfo.reqDataLen = 0;    /* Since there is not data in the body the length is 0. */
-    syncInfo.pRespData = NULL;   /* We don't care about the body in this request since we want the file size that will
-                                   be found in a header value. */
-    syncInfo.respDataLen = 0;   /* Since we are not saving any response body the length is 0. */
-
-    /* Set the request configurations. */
-    fileSizeReqConfig.pPath = pPath; 
-    fileSizeReqConfig.pathLen = strlen( pPath );
-    fileSizeReqConfig.pHost = pAddress;
-    fileSizeReqConfig.hostLen = addressLen;
-    fileSizeReqConfig.method = IOT_HTTPS_METHOD_GET;  /* Performing a HEAD request with S3 requires generating a Sigv4 signature 
-                                               in an Authorization header field. We work around this by performing a GET
-                                               on Range: bytes=0-0. Then extracting the size of the file from the 
-                                               Content-Range header field in the response. */
-    fileSizeReqConfig.reqUserBuffer.pBuffer = pReqUserBuffer;
-    fileSizeReqConfig.reqUserBuffer.bufferLen = reqUserBufferLen;
-    fileSizeReqConfig.respUserBuffer.pBuffer = pRespUserBuffer;
-    fileSizeReqConfig.respUserBuffer.bufferLen = respUserBufferLen;
-    fileSizeReqConfig.isAsync = false;
-    fileSizeReqConfig.pSyncInfo = &syncInfo;
-    fileSizeReqConfig.pConnInfo = pConnInfo;
-
-    /* Initialize the request to retrieve a request handle. */
-    httpsClientStatus = IotHttpsClient_InitializeRequest( &fileSizeReqHandle, &fileSizeReqConfig );
-    if( httpsClientStatus != IOT_HTTPS_OK )
-    {
-        IotLogError("An error occurred in IotHttpsClient_InitializeRequest() with error code: %d", httpsClientStatus);
-        return EXIT_FAILURE;
-    }
-
-    /* Add the header to get bytes=0-0. S3 will respond with a Content-Range header that contains the size of the file 
-       in it. This header will look like: "Content-Range: bytes 0-0/FILESIZE". The body will have a single byte that 
-       we are ignoring. */
-    httpsClientStatus = IotHttpsClient_AddHeader( fileSizeReqHandle, RANGE_HEADER_FIELD, RANGE_0_TO_0_HEADER_VALUE, strlen( RANGE_0_TO_0_HEADER_VALUE ) );
-    if( httpsClientStatus != IOT_HTTPS_OK )
-    {
-        IotLogError( "Failed to write the header \"Range: bytes=0-0\" into the request. With error code: %d", httpsClientStatus );
-        return EXIT_FAILURE;
-    }
-
-    /* Send the request synchronously. */
-    httpsClientStatus = IotHttpsClient_SendSync( pConnHandle, fileSizeReqHandle, &fileSizeRespHandle );
-    if( httpsClientStatus != IOT_HTTPS_OK )
-    {
-        IotLogError( "There has been an error receiving the response. The error code is: %d", httpsClientStatus );
-        /* Even though there is an error we could still read headers and body that may have been 
-        filled in the buffer depending on the error. */
-    }
-
-    /* Read the response status to see if we successfully got a partial content response. If we did not then
-       we failed and will exit the demo. */
-    httpsClientStatus = IotHttpsClient_ReadResponseStatus(fileSizeRespHandle, &respStatus );
-    if( httpsClientStatus != IOT_HTTPS_OK)
-    {
-        IotLogError("Could not read the response status. Error code %d", httpsClientStatus);
-        return EXIT_FAILURE;
-    }
-    if( respStatus != IOT_HTTPS_STATUS_PARTIAL_CONTENT)
-    {
-        IotLogError("Could not retrieve the file size. s3 responded with response status: %d", respStatus);
-        return EXIT_FAILURE;
-    }
-
-    /* Get the file size by parsing the "bytes 0-0/FILESIZE" Content-Range header value string. */
-    httpsClientStatus = IotHttpsClient_ReadHeader( fileSizeRespHandle, CONTENT_RANGE_HEADER_FIELD, contentRangeValStr, sizeof(contentRangeValStr) );
-    if(httpsClientStatus != IOT_HTTPS_OK)
-    {
-        IotLogError("Could find the Content-Range header in the response. Error code %d",httpsClientStatus);
-        return EXIT_FAILURE;
-    }
-    pFileSizeStr = strstr( contentRangeValStr, "/" ) + sizeOfOneChar;
-    *fileSize = (uint32_t)strtoul(pFileSizeStr, NULL, 10);
-
-    return EXIT_SUCCESS;
-}
-
-/*-----------------------------------------------------------*/   
-
-/**
  * @brief The function that runs the HTTPS Asynchronous demo.
  * 
  * @param[in] awsIotMqttMode Specify if this demo is running with the AWS IoT
@@ -661,7 +519,7 @@ static int _getS3ObjectFileSize(
  *
  * @return `EXIT_SUCCESS` if the demo completes successfully; `EXIT_FAILURE` otherwise.
  */
-int RunHttpsAsyncDemo( bool awsIotMqttMode,
+int RunHttpsAsyncDownloadDemo( bool awsIotMqttMode,
                  const char * pIdentifier,
                  void * pNetworkServerInfo,
                  void * pNetworkCredentialInfo,
@@ -684,13 +542,13 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
     /* Asynchronous request specific configurations. */
     IotHttpsAsyncRequestInfo_t asyncInfo = { 0 };
 
-    /* The location of the path within string IOT_DEMO_HTTPS_PRESIGNED_URL. */
+    /* The location of the path within string IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
     char *pPath = NULL;
-    /* The length of the path within string IOT_DEMO_HTTPS_PRESIGNED_URL. */
+    /* The length of the path within string IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
     size_t pathLen = 0;
-    /* The location of the address within string IOT_DEMO_HTTPS_PRESIGNED_URL. */
+    /* The location of the address within string IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
     char *pAddress = NULL;
-    /* The length of the address within string IOT_DEMO_HTTPS_PRESIGNED_URL. */
+    /* The length of the address within string IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
     size_t addressLen = 0;
 
     /* The number of bytes we want to request with in each range of the file bytes. */
@@ -698,16 +556,16 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
     /* curByte indicates which starting byte we want to download next. */
     uint32_t curByte = 0;
 
-    /* Retrieve the path location and length from IOT_DEMO_HTTPS_PRESIGNED_URL. */
-    httpsClientStatus = IotHttpsClient_GetUrlPath( IOT_DEMO_HTTPS_PRESIGNED_URL, (size_t)strlen( IOT_DEMO_HTTPS_PRESIGNED_URL ), &pPath, &pathLen);
+    /* Retrieve the path location and length from IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
+    httpsClientStatus = IotHttpsClient_GetUrlPath( IOT_DEMO_HTTPS_PRESIGNED_GET_URL, (size_t)strlen( IOT_DEMO_HTTPS_PRESIGNED_GET_URL ), &pPath, &pathLen);
     if (httpsClientStatus != IOT_HTTPS_OK)
     {
         IotLogError("An error occurred in IotHttpsClient_GetUrlPath() with error code %d.", httpsClientStatus);
         return EXIT_FAILURE;
     }
 
-    /* Retrieve the address location and length from the IOT_DEMO_HTTPS_PRESIGNED_URL. */
-    httpsClientStatus = IotHttpsClient_GetUrlAddress( IOT_DEMO_HTTPS_PRESIGNED_URL, (size_t)strlen( IOT_DEMO_HTTPS_PRESIGNED_URL ), &pAddress, &addressLen);
+    /* Retrieve the address location and length from the IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
+    httpsClientStatus = IotHttpsClient_GetUrlAddress( IOT_DEMO_HTTPS_PRESIGNED_GET_URL, (size_t)strlen( IOT_DEMO_HTTPS_PRESIGNED_GET_URL ), &pAddress, &addressLen);
     if (httpsClientStatus != IOT_HTTPS_OK)
     {
         IotLogError("An error occurred in IotHttpsClient_GetUrlAddress() with error code %d.", httpsClientStatus );
@@ -763,7 +621,7 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
     }
 
     /* Retrieve the size of the file specified in the S3 Presigned URL. */
-    if( _getS3ObjectFileSize( &_fileSize,
+    if( _IotHttpsDemo_GetS3ObjectFileSize( &_fileSize,
             &connHandle, 
             pPath, 
             pathLen, 
@@ -804,7 +662,7 @@ int RunHttpsAsyncDemo( bool awsIotMqttMode,
         /* Set the HTTP request configurations. */
         _pReqConfigs[reqIndex].pPath = pPath;
         /* The path is everything that is not the address. It also includes the query. So we get the strlen( pPath ) to 
-           acquire everything following in IOT_DEMO_HTTPS_PRESIGNED_URL. */
+           acquire everything following in IOT_DEMO_HTTPS_PRESIGNED_GET_URL. */
         _pReqConfigs[reqIndex].pathLen = strlen( pPath );
         _pReqConfigs[reqIndex].pHost = pAddress;
         _pReqConfigs[reqIndex].hostLen = addressLen;
