@@ -609,7 +609,7 @@ static int _httpParserOnHeaderValueCallback(http_parser * pHttpParser, const cha
 
 static int _httpParserOnHeadersCompleteCallback(http_parser * pHttpParser)
 {
-    IotLogDebug("Parser: End of the headers reached in the pHttpParser.");
+    IotLogDebug("Parser: End of the headers reached.");
 
     int retVal = 0;
     _httpsResponse_t * _httpsResponse = (_httpsResponse_t *)(pHttpParser->data);
@@ -696,10 +696,11 @@ static int _httpParserOnMessageCompleteCallback(http_parser * pHttpParser)
     _httpsResponse_t * _httpsResponse = (_httpsResponse_t *)(pHttpParser->data);
     _httpsResponse->parserState = PARSER_STATE_BODY_COMPLETE;
 
-    /* When this callback is reached the end of the HTTP message is indicated. If the length of buffer passed in is 
-       larger than the message, then http_parser_execute will return either HPE_CLOSED_CONNECTION or 
-       HPE_INVALID_CONSTANT. */
-    return 0;
+    /* When this callback is reached the end of the HTTP message is indicated. We return a 1 here so that we can stop 
+       parsing. When we support pipelined requests, we can check if the next response tailgated/piggybacked onto this
+       buffer by checking if there is a status code available in pBodyCur + 1 (PROCESSING_STATE_FILLING_BODY_BUFFER) or 
+       pHeaderCur + 1 ( for PROCESSING_STATE_FILLING_HEADER_BUFFER). "*/
+    return 1;
 }
 
 /*-----------------------------------------------------------*/
